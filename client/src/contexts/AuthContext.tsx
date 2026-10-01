@@ -17,7 +17,12 @@ interface AuthValue {
   profile: Profile | null;
   loading: boolean;
   isAdmin: boolean;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirm: boolean }>;
+  signUp: (
+    email: string,
+    password: string,
+    name: string,
+    adminCode?: string
+  ) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
 }
@@ -27,7 +32,9 @@ const AuthContext = createContext<AuthValue | null>(null);
 function toKorean(message: string) {
   if (/invalid login/i.test(message)) return "이메일 또는 비밀번호가 올바르지 않습니다.";
   if (/already registered/i.test(message)) return "이미 가입된 이메일입니다.";
-  if (/not confirmed/i.test(message)) return "이메일 인증을 완료한 뒤 로그인해 주세요.";
+  if (/not confirmed/i.test(message))
+    return "Supabase에서 'Confirm email' 설정이 켜져 있습니다. Authentication > Sign In / Providers > Email 에서 꺼 주세요.";
+  if (/database error saving new user/i.test(message)) return "회원가입 처리 중 오류가 발생했습니다. 관리자 코드를 확인해 주세요.";
   if (/password/i.test(message)) return "비밀번호는 8자 이상이어야 합니다.";
   if (/rate limit/i.test(message)) return "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
   return message;
@@ -72,15 +79,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   }, [userId]);
 
-  const signUp: AuthValue["signUp"] = async (email, password, name) => {
+  const signUp: AuthValue["signUp"] = async (email, password, name, adminCode) => {
+    // 관리자 코드는 서버(DB 트리거)에서 검증합니다. 브라우저 코드에는 정답 코드가 없습니다.
+    const meta: Record<string, string> = { name };
+    if (adminCode) meta.admin_code = adminCode;
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name }, emailRedirectTo: window.location.origin },
+      options: { data: meta },
     });
-    if (error) return { error: toKorean(error.message), needsConfirm: false };
-    // 이메일 인증을 켜둔 경우 session이 없음
-    return { error: null, needsConfirm: !data.session };
+    if (error) {
+      if (adminCode && /database error saving new user/i.test(error.message)) {
+        return { error: "관리자 코드가 올바르지 않습니다." };
+      }
+      return { error: toKorean(error.message) };
+    }
+
+    // 이메일 인증을 쓰지 않으므로 가입 즉시 세션이 생깁니다.
+    // (Supabase 설정에서 Confirm email 이 꺼져 있으면 data.session 이 바로 존재)
+    if (!data.session) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) return { error: toKorean(signInError.message) };
+    }
+    logActivity("signup");
+    return { error: null };
   };
 
   const signIn: AuthValue["signIn"] = async (email, password) => {

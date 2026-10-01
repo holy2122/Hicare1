@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { HeartPulse } from "lucide-react";
+import { HeartPulse, ShieldCheck, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabaseReady } from "@/lib/supabase";
 
@@ -15,6 +15,8 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [agree, setAgree] = useState(false);
+  const [accountType, setAccountType] = useState<"user" | "admin">("user");
+  const [adminCode, setAdminCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ type: "error" | "ok"; text: string } | null>(null);
 
@@ -27,6 +29,8 @@ export default function Login() {
     setMsg(null);
     if (mode === "signup") {
       if (password.length < 8) return setMsg({ type: "error", text: "비밀번호는 8자 이상이어야 합니다." });
+      if (accountType === "admin" && !adminCode.trim())
+        return setMsg({ type: "error", text: "관리자 코드를 입력해 주세요." });
       if (!agree) return setMsg({ type: "error", text: "개인정보 수집·이용에 동의해 주세요." });
     }
     setBusy(true);
@@ -34,12 +38,14 @@ export default function Login() {
       const err = await signIn(email.trim(), password);
       if (err) setMsg({ type: "error", text: err });
     } else {
-      const r = await signUp(email.trim(), password, name.trim());
+      const r = await signUp(
+        email.trim(),
+        password,
+        name.trim(),
+        accountType === "admin" ? adminCode.trim() : undefined
+      );
       if (r.error) setMsg({ type: "error", text: r.error });
-      else if (r.needsConfirm) {
-        setMode("login");
-        setMsg({ type: "ok", text: "인증 메일을 보냈습니다. 메일의 링크를 눌러 인증한 뒤 로그인해 주세요." });
-      }
+      // 성공하면 세션이 생겨 위의 useEffect 가 자동으로 홈으로 이동시킵니다.
     }
     setBusy(false);
   };
@@ -73,10 +79,44 @@ export default function Login() {
 
         <form onSubmit={submit} className="space-y-3">
           {mode === "signup" && (
+            <div className="grid grid-cols-2 gap-2 text-sm font-bold">
+              {([
+                ["user", "이용자 회원가입", User],
+                ["admin", "관리자 회원가입", ShieldCheck],
+              ] as const).map(([type, label, Icon]) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => { setAccountType(type); setMsg(null); }}
+                  className={`flex items-center justify-center gap-1.5 rounded-xl border py-2 cursor-pointer ${
+                    accountType === type
+                      ? "border-teal-600 bg-teal-50 text-teal-700"
+                      : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {mode === "signup" && (
             <input className={inputCls} placeholder="이름(닉네임)" value={name} onChange={(e) => setName(e.target.value)} maxLength={30} required />
           )}
           <input className={inputCls} type="email" placeholder="이메일" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
           <input className={inputCls} type="password" placeholder="비밀번호 (8자 이상)" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} required />
+          {mode === "signup" && accountType === "admin" && (
+            <input
+              className={inputCls}
+              type="password"
+              inputMode="numeric"
+              placeholder="관리자 코드"
+              value={adminCode}
+              onChange={(e) => setAdminCode(e.target.value)}
+              autoComplete="off"
+              required
+            />
+          )}
           {mode === "signup" && (
             <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-600">
               <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-0.5" />
@@ -85,7 +125,7 @@ export default function Login() {
           )}
           {msg && <p className={`text-xs font-semibold ${msg.type === "error" ? "text-rose-600" : "text-teal-700"}`}>{msg.text}</p>}
           <button disabled={busy || !supabaseReady} className="w-full rounded-xl bg-teal-700 py-2.5 text-sm font-bold text-white hover:bg-teal-800 disabled:opacity-50 cursor-pointer">
-            {busy ? "처리 중…" : mode === "login" ? "로그인" : "가입하기"}
+            {busy ? "처리 중…" : mode === "login" ? "로그인" : accountType === "admin" ? "관리자로 가입하기" : "가입하기"}
           </button>
         </form>
       </div>
